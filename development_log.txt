@@ -2,6 +2,12 @@
 
 ##### 2026-03-02 #####
 
+### 2. Streamlit Cloud 배포 OOM(Out of Memory) 해결
+- 문제 상황: Streamlit Cloud 배포 시 인스턴스가 지속적으로 재시작되고 `torch.classes` 관련 로그가 표출되며 앱 접속이 불가한 현상 발생.
+- 원인 분석: `facebook/sam2.1-hiera-large` 모델 용량이 Streamlit Cloud 무료 티어 메모리 제한(1GB)을 초과하여 OOM 커널 킬러가 작동.
+- 해결 방안: `AIContactAngleAnalyzer` 엔진이 CPU 환경에서는 `sam2.1-hiera-tiny` 모델을 기본으로 사용하도록 예외 처리.
+- 반영 사항: `deepdrop_sfe/ai_engine.py` 및 `demo/app.py` 소스 구조 업데이트 및 `feature/streamlit-cloud` 적용 완료.
+
 ### 1. UI 테스트 완료
 - 작업 내용: Streamlit 로컬 환경(`http://localhost:8501`)에서 통합 UI 점검 수행
 - 주요 확인 사항:
