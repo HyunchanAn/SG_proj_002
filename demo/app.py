@@ -396,49 +396,68 @@ if uploaded_file:
             st.subheader(R["header_drop_detect"])
             
             drop_mode = st.radio(R["lbl_drop_mode"], [R["opt_drop_auto"], R["opt_drop_manual"]], horizontal=True)
-            droplet_box = None
             
+            # Initialize droplet session state if not already present
+            if 'drop_cx' not in st.session_state: st.session_state.drop_cx = int(warped_img.shape[1] // 2)
+            if 'drop_cy' not in st.session_state: st.session_state.drop_cy = int(warped_img.shape[0] // 2)
+            if 'drop_r' not in st.session_state: st.session_state.drop_r = int(warped_img.shape[0] // 6)
+
+            droplet_box = None
+            h_w, w_w, _ = warped_img.shape
+
             if drop_mode == R["opt_drop_auto"]:
                 with st.spinner(R["msg_detecting"]):
-                    # Use new auto detection, excluding coin area
-                    # coin_box might be in original image coords. Warp it? 
-                    # Easier to just let auto_detect find objects in warped image.
+                    # Automatic detection without intervention
                     droplet_box = analyzer.auto_detect_droplet_candidate(warped_img)
+                    if droplet_box is not None:
+                        # Draw preview for auto-detected box
+                        preview_auto = warped_img.copy()
+                        x1, y1, x2, y2 = map(int, droplet_box)
+                        cv2.rectangle(preview_auto, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                        st.image(preview_auto, caption="Auto-Detected Droplet Box", use_container_width=True)
+                        
+                        # Sync session state so switching to manual starts here
+                        st.session_state.drop_cx = int((x1 + x2) / 2)
+                        st.session_state.drop_cy = int((y1 + y2) / 2)
+                        st.session_state.drop_r = int(max(x2 - x1, y2 - y1) / 2)
+                    else:
+                        st.warning("자동 감지 실패. 수동 선택 모드로 변경하여 액적 위치를 지정해주세요.")
             
             elif drop_mode == R["opt_drop_manual"]:
-                from streamlit_drawable_canvas import st_canvas
-                h_w, w_w, _ = warped_img.shape
-                d_w = 450
-                s_w = d_w / w_w
-                d_h = int(h_w * s_w)
+                st.info("슬라이더로 빨간색 원을 액적에 맞춰주세요. (Adjust red circle to droplet)")
                 
-                # Ensure res_w is explicitly uint8 for PIL and matches the format
-                res_w = cv2.resize(warped_img, (d_w, d_h)).astype(np.uint8)
+                # Option to run auto-detect and seed the sliders (Consistency with Coin UI)
+                if st.button("🔄 자동 감지로 위치 초기화 (Reset to Auto Detect)", use_container_width=True):
+                    with st.spinner(R["msg_detecting"]):
+                        auto_box = analyzer.auto_detect_droplet_candidate(warped_img)
+                        if auto_box is not None:
+                            x1, y1, x2, y2 = auto_box
+                            st.session_state.drop_cx = int((x1 + x2) / 2)
+                            st.session_state.drop_cy = int((y1 + y2) / 2)
+                            st.session_state.drop_r = int(max(x2 - x1, y2 - y1) / 2)
+                            st.success("위치 초기화 성공!")
+                        else:
+                            st.error("자동 감지 실패.")
                 
-                c_col1, c_col2 = st.columns(2)
-                with c_col1:
-                    canvas_drop = st_canvas(
-                        fill_color="rgba(255, 0, 0, 0.3)",
-                        stroke_width=2,
-                        stroke_color="#FF0000",
-                        background_image=import_image_pil(res_w),
-                        update_streamlit=True,
-                        height=d_h,
-                        width=d_w,
-                        drawing_mode="rect",
-                        key=f"canvas_drop_{uploaded_file.name}"
-                    )
+                ds_col1, ds_col2, ds_col3 = st.columns(3)
+                with ds_col1:
+                    st.slider("Drop Center X", 0, w_w, key="drop_cx")
+                with ds_col2:
+                    st.slider("Drop Center Y", 0, h_w, key="drop_cy")
+                with ds_col3:
+                    st.slider("Drop Radius", 5, min(h_w, w_w)//2, key="drop_r")
+
+                # Preview Overlay for Droplet (Manual Mode)
+                drop_preview_img = warped_img.copy()
+                dcx, dcy, dr = st.session_state.drop_cx, st.session_state.drop_cy, st.session_state.drop_r
+                cv2.circle(drop_preview_img, (dcx, dcy), dr, (255, 0, 0), 2) # Red circle
+                cv2.circle(drop_preview_img, (dcx, dcy), 3, (0, 0, 255), -1)
                 
-                if canvas_drop.json_data is not None:
-                    objs = pd.json_normalize(canvas_drop.json_data["objects"])
-                    if not objs.empty:
-                        o = objs.iloc[-1]
-                        droplet_box = np.array([
-                            int(o["left"] / s_w),
-                            int(o["top"] / s_w),
-                            int((o["left"] + o["width"]) / s_w),
-                            int((o["top"] + o["height"]) / s_w)
-                        ])
+                st.image(drop_preview_img, caption="Droplet Localization Alignment", use_container_width=True)
+
+                # Calculated box from manual sliders
+                droplet_box = np.array([dcx - dr, dcy - dr, dcx + dr, dcy + dr])
+            
             
             # Analyze Droplet on Warped Image
             analyzer.set_image(warped_img)
@@ -452,11 +471,7 @@ if uploaded_file:
             vis_mask[droplet_mask_bool] = [255, 0, 0] # Red mask
             overlay = cv2.addWeighted(warped_img, 0.7, vis_mask, 0.3, 0)
             
-            if drop_mode == R["opt_drop_manual"]:
-                with c_col2:
-                    st.image(overlay, caption=R["cap_segmentation"], use_container_width=True)
-            else:
-                st.image(overlay, caption=R["cap_segmentation"], use_container_width=True)
+            st.image(overlay, caption=R["cap_segmentation"], use_container_width=True)
             
             # 4. Calculation
             st.subheader(R["header_step3"])
